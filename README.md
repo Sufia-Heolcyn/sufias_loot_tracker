@@ -1,4 +1,4 @@
-# Sufia's Loot Tracker (v1.02)
+# Sufia's Loot Tracker (v1.0.2)
 
 A Foundry VTT (v13 / v14) module for the **Pathfinder Second Edition (`pf2e`)** system that automates and tracks **Table 10-9: Party Treasure by Level** from the *Pathfinder GM Core* rulebook across Levels 1–20.
 
