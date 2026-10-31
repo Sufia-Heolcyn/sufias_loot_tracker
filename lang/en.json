@@ -1,0 +1,15 @@
+{
+  "SUFIAS_LOOT_TRACKER": {
+    "Title": "Sufia's Loot Tracker — Party Treasure by Level",
+    "HeaderButton": "Party Treasure by Level",
+    "GenerateLootGP": "Generate Random Loot (GP)",
+    "GenerateLootTreasure": "Generate Loot (Treasure Items)",
+    "MandatoryPermanent": "Mandatory Permanent Items",
+    "MandatoryConsumables": "Mandatory Consumables",
+    "MandatoryCurrency": "Mandatory Currency / Valuables",
+    "BonusLoot": "Bonus Loot & Extra GP",
+    "Distribute": "Distribute",
+    "Distributed": "Distributed",
+    "AddBonusSlot": "Add Bonus Slot"
+  }
+}
