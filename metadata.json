@@ -1,6 +1,0 @@
-{
-  "name": "PF2e Party Treasure by Level — Foundry VTT Module & Simulator",
-  "description": "Foundry VTT PF2e module and interactive Party Sheet ApplicationV2 workbench automating GM Core Table 10-9 Party Treasure by Level across Levels 1–20.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
