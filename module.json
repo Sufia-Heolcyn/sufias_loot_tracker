@@ -33,9 +33,9 @@
       }
     ]
   },
-  "version": "1.3.0",
+  "version": "1.4.0",
   "license": "LICENSE",
   "url": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker",
   "manifest": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/latest/download/module.json",
-  "download": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/download/1.3.0/module.zip"
+  "download": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/download/1.4.0/module.zip"
 }

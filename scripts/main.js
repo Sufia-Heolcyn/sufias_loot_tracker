@@ -11,6 +11,7 @@
 
 const MODULE_ID = "sufias-loot-tracker";
 const FLAG_KEY = "treasure-data";
+const SCHEMA_VERSION = 2;
 
 /**
  * Standard PF2e Gold Pieces compendium UUID & icon for dragging GP stacks into Loot containers
@@ -29,6 +30,16 @@ const RARITY_WEIGHTS = {
   rare: 8,
   unique: 2
 };
+
+const COIN_NAMES = new Set(["copper pieces", "silver pieces", "gold pieces", "platinum pieces"]);
+const PERMANENT_TYPES = new Set(["weapon", "armor", "equipment", "shield"]);
+const ROLLER_ALLOWED_TYPES = new Set(["weapon", "armor", "equipment", "shield", "consumable", "treasure", "backpack"]);
+
+/**
+ * In-memory Compendium Index Cache for O(1) lookups and instant rolling
+ */
+let equipmentCachePromise = null;
+let clutterCache = { packId: null, entries: null };
 
 /**
  * GM Core Table 10-9: Party Treasure by Level (Levels 1–20)
@@ -126,6 +137,100 @@ function formatItemPrice(entry) {
 }
 
 /**
+ * Builds and caches pre-bucketed lookup tables from `pf2e.equipment-srd` once per session.
+ * Eliminates repeated 8,000+ item compendium scans.
+ */
+async function getEquipmentCache() {
+  if (equipmentCachePromise) return equipmentCachePromise;
+
+  const pack = game.packs?.get("pf2e.equipment-srd");
+  if (!pack) return null;
+
+  equipmentCachePromise = (async () => {
+    const index = await pack.getIndex({
+      fields: [
+        "img",
+        "system.level.value",
+        "system.price.value",
+        "type",
+        "system.traits.rarity",
+        "system.traits.value"
+      ]
+    });
+
+    const byUuid = new Map();
+    const byNameLower = new Map();
+    const commonPermanentByLevel = new Map();
+    const commonConsumablesByLevel = new Map();
+    const treasures = [];
+    const rollerPool = [];
+
+    for (const entry of index) {
+      const uuid = entry.uuid;
+      const nameLower = (entry.name || "").toLowerCase();
+      const level = Number(entry.system?.level?.value ?? 0);
+      const rarity = (entry.system?.traits?.rarity || "common").toLowerCase();
+      const type = entry.type;
+
+      byUuid.set(uuid, entry);
+      if (nameLower && !byNameLower.has(nameLower)) {
+        byNameLower.set(nameLower, entry);
+      }
+
+      if (rarity === "common") {
+        if (PERMANENT_TYPES.has(type)) {
+          let list = commonPermanentByLevel.get(level);
+          if (!list) {
+            list = [];
+            commonPermanentByLevel.set(level, list);
+          }
+          list.push(entry);
+        } else if (type === "consumable") {
+          let list = commonConsumablesByLevel.get(level);
+          if (!list) {
+            list = [];
+            commonConsumablesByLevel.set(level, list);
+          }
+          list.push(entry);
+        }
+      }
+
+      if (type === "treasure" && !COIN_NAMES.has(nameLower)) {
+        const gpVal = Number(entry.system?.price?.value?.gp ?? 0);
+        if (gpVal > 0) {
+          treasures.push({ entry, gpVal });
+        }
+      }
+
+      if (ROLLER_ALLOWED_TYPES.has(type)) {
+        const rawTraits = entry.system?.traits?.value;
+        const traitsLower = Array.isArray(rawTraits)
+          ? rawTraits.map((t) => String(t).toLowerCase())
+          : [];
+        rollerPool.push({
+          entry,
+          level,
+          rarity,
+          typeLower: type.toLowerCase(),
+          traitsLower
+        });
+      }
+    }
+
+    return {
+      byUuid,
+      byNameLower,
+      commonPermanentByLevel,
+      commonConsumablesByLevel,
+      treasures,
+      rollerPool
+    };
+  })();
+
+  return equipmentCachePromise;
+}
+
+/**
  * Finds the user's `world.clutter` compendium pack
  */
 function getClutterPack() {
@@ -144,16 +249,34 @@ function getClutterPack() {
 }
 
 /**
+ * Returns cached index entries for `world.clutter`
+ */
+async function getClutterEntries() {
+  const pack = getClutterPack();
+  if (!pack) return null;
+  if (clutterCache.packId === pack.collection && clutterCache.entries) {
+    return clutterCache.entries;
+  }
+  const index = await pack.getIndex({
+    fields: ["img", "system.level.value", "system.price.value", "type"]
+  });
+  const entries = Array.from(index);
+  clutterCache = { packId: pack.collection, entries };
+  return entries;
+}
+
+/**
  * Builds the 4-player fundamental rune slots for a given level
  */
-function createDefaultFundamentalRuneSlots(level) {
+function createDefaultFundamentalRuneSlots(level, eqCache = null) {
   const templates = FUNDAMENTAL_RUNES_BY_LEVEL[level] || [];
   const slots = [];
   for (const rune of templates) {
+    const matched = eqCache?.byNameLower?.get(rune.name.toLowerCase());
     for (let playerNum = 1; playerNum <= 4; playerNum++) {
       slots.push({
-        uuid: "",
-        img: "",
+        uuid: matched?.uuid || "",
+        img: matched?.img || "",
         name: rune.name,
         runeTemplateName: rune.name,
         playerLabel: `Player ${playerNum}`,
@@ -193,7 +316,7 @@ function createDefaultClutterSlots(level, count = DEFAULT_CLUTTER_SLOTS) {
 /**
  * Builds the default slot structure for a single level from PARTY_TREASURE_MATRIX & FUNDAMENTAL_RUNES_BY_LEVEL
  */
-function createDefaultLevelSlots(level) {
+function createDefaultLevelSlots(level, eqCache = null) {
   const spec = PARTY_TREASURE_MATRIX[level];
   const permanentItems = [];
   for (const group of spec.permanent) {
@@ -240,7 +363,7 @@ function createDefaultLevelSlots(level) {
     }
   ];
 
-  const fundamentalRunes = createDefaultFundamentalRuneSlots(level);
+  const fundamentalRunes = createDefaultFundamentalRuneSlots(level, eqCache);
   const clutterLoot = createDefaultClutterSlots(level);
 
   return {
@@ -280,9 +403,9 @@ function pickWeightedByRarity(candidates, maxRarity) {
     buckets[r] = [];
   }
   for (const item of candidates) {
-    const r = (item.system?.traits?.rarity || "common").toLowerCase();
+    const r = item.rarity || "common";
     if (buckets[r]) {
-      buckets[r].push(item);
+      buckets[r].push(item.entry);
     }
   }
 
@@ -315,6 +438,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     this.activeLevel = Number(partyActor?.system?.details?.level?.value) || 1;
     if (this.activeLevel < 1 || this.activeLevel > 20) this.activeLevel = 1;
     this.activeTab = "level"; // "level" | "randomRoller"
+    this._savedScrollTop = 0;
   }
 
   static DEFAULT_OPTIONS = {
@@ -350,31 +474,42 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
 
   static PARTS = {
     main: {
-      template: `modules/${MODULE_ID}/templates/treasure-tracker.hbs`
+      template: `modules/${MODULE_ID}/templates/treasure-tracker.hbs`,
+      scrollable: [".treasure-sections-scroll"]
     }
   };
 
   /**
-   * Ensures actor flag structure contains keys 1..20 with permanentItems, consumables, currency, fundamentalRunes, clutterLoot, bonusLoot,
-   * plus randomRoller state, and resolves Compendium UUIDs & icons for Fundamental Runes and existing items.
+   * Fast flag initialization and O(1) icon/UUID resolution using the in-memory equipment cache.
    */
   async ensureFlagStructure() {
-    let flagData = this.actor.getFlag(MODULE_ID, FLAG_KEY);
-    let needsSave = false;
+    const rawFlag = this.actor.getFlag(MODULE_ID, FLAG_KEY);
+    const eqCache = await getEquipmentCache();
 
-    if (!flagData || typeof flagData !== "object") {
-      flagData = {};
-      needsSave = true;
+    // Fast path: if already initialized to current schema and active level runes/icons are resolved, return shallow clone
+    if (rawFlag && rawFlag._schemaVersion === SCHEMA_VERSION) {
+      const activeLvlObj = rawFlag[this.activeLevel];
+      const needsActiveResolution =
+        activeLvlObj &&
+        ["permanentItems", "consumables", "currency", "fundamentalRunes", "clutterLoot", "bonusLoot"].some((cat) =>
+          (activeLvlObj[cat] || []).some((it) => !it.blank && ((it.uuid && !it.img) || (cat === "fundamentalRunes" && !it.uuid)))
+        );
+      if (!needsActiveResolution) {
+        return foundry.utils.deepClone(rawFlag);
+      }
     }
 
-    const cloned = foundry.utils.deepClone(flagData);
+    const cloned = rawFlag && typeof rawFlag === "object" ? foundry.utils.deepClone(rawFlag) : {};
+    let needsSave = cloned._schemaVersion !== SCHEMA_VERSION;
+    cloned._schemaVersion = SCHEMA_VERSION;
+
     for (let lvl = 1; lvl <= 20; lvl++) {
       if (!cloned[lvl] || !Array.isArray(cloned[lvl].permanentItems)) {
-        cloned[lvl] = createDefaultLevelSlots(lvl);
+        cloned[lvl] = createDefaultLevelSlots(lvl, eqCache);
         needsSave = true;
       } else {
         if (!Array.isArray(cloned[lvl].fundamentalRunes)) {
-          cloned[lvl].fundamentalRunes = createDefaultFundamentalRuneSlots(lvl);
+          cloned[lvl].fundamentalRunes = createDefaultFundamentalRuneSlots(lvl, eqCache);
           needsSave = true;
         }
         if (!Array.isArray(cloned[lvl].clutterLoot)) {
@@ -393,47 +528,38 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       needsSave = true;
     }
 
-    // Resolve Fundamental Rune compendium UUIDs & missing item icons on the active level
-    const activeLvlObj = cloned[this.activeLevel];
-    if (activeLvlObj) {
-      const pack = game.packs?.get("pf2e.equipment-srd");
-      if (pack) {
-        const activeRunes = activeLvlObj.fundamentalRunes || [];
-        const needsRuneLookup = activeRunes.some((r) => !r.blank && (!r.uuid || !r.img));
-        if (needsRuneLookup) {
-          const index = await pack.getIndex({ fields: ["name", "img"] });
-          for (const runeSlot of activeRunes) {
-            if (runeSlot.blank) continue;
-            if (!runeSlot.uuid || !runeSlot.img) {
-              const targetName = (runeSlot.runeTemplateName || runeSlot.name || "").toLowerCase();
-              const match = index.find((e) => e.name.toLowerCase() === targetName);
-              if (match) {
-                runeSlot.uuid = match.uuid;
-                runeSlot.img = match.img || runeSlot.img || "";
-                needsSave = true;
-              }
+    // Resolve Fundamental Rune UUIDs & missing icons across all levels in O(1) time via eqCache
+    if (eqCache) {
+      const categories = ["permanentItems", "consumables", "currency", "fundamentalRunes", "clutterLoot", "bonusLoot"];
+      for (let lvl = 1; lvl <= 20; lvl++) {
+        const lvlObj = cloned[lvl];
+        if (!lvlObj) continue;
+
+        for (const runeSlot of lvlObj.fundamentalRunes || []) {
+          if (runeSlot.blank) continue;
+          if (!runeSlot.uuid || !runeSlot.img) {
+            const targetName = (runeSlot.runeTemplateName || runeSlot.name || "").toLowerCase();
+            const match = eqCache.byNameLower.get(targetName);
+            if (match) {
+              runeSlot.uuid = match.uuid;
+              runeSlot.img = match.img || runeSlot.img || "";
+              needsSave = true;
             }
           }
         }
-      }
 
-      // Ensure Gold Coins have their coin icon and any UUID-linked item without img gets its icon resolved
-      const categories = ["permanentItems", "consumables", "currency", "fundamentalRunes", "clutterLoot", "bonusLoot"];
-      for (const cat of categories) {
-        for (const item of activeLvlObj[cat] || []) {
-          if (item.blank) continue;
-          if (item.uuid === GOLD_PIECES_UUID && !item.img) {
-            item.img = GOLD_PIECES_ICON;
-            needsSave = true;
-          } else if (item.uuid && !item.img) {
-            try {
-              const doc = await fromUuid(item.uuid);
-              if (doc?.img) {
-                item.img = doc.img;
+        for (const cat of categories) {
+          for (const item of lvlObj[cat] || []) {
+            if (item.blank || item.img) continue;
+            if (item.uuid === GOLD_PIECES_UUID) {
+              item.img = GOLD_PIECES_ICON;
+              needsSave = true;
+            } else if (item.uuid) {
+              const cached = eqCache.byUuid.get(item.uuid);
+              if (cached?.img) {
+                item.img = cached.img;
                 needsSave = true;
               }
-            } catch {
-              // Ignore missing compendium links
             }
           }
         }
@@ -444,6 +570,105 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       await this.actor.setFlag(MODULE_ID, FLAG_KEY, cloned);
     }
     return cloned;
+  }
+
+  /**
+   * Updates the active level tab's progress counter (`X/Y`) in-place in the DOM
+   */
+  _updateLevelProgressInDom(level, levelData) {
+    if (!this.element || !levelData) return;
+    const allMand = [
+      ...(levelData.permanentItems || []),
+      ...(levelData.consumables || []),
+      ...(levelData.currency || []),
+      ...(levelData.fundamentalRunes || [])
+    ];
+    const distCount = allMand.filter((e) => e.distributed).length;
+    const activeTabProg = this.element.querySelector(`.level-tab[data-level="${level}"] .tab-prog`);
+    if (activeTabProg) {
+      activeTabProg.textContent = `${distCount}/${allMand.length}`;
+    }
+  }
+
+  /**
+   * Updates a single `.loot-row` element in-place in the DOM so single-item clear/reroll never re-renders the whole window
+   */
+  _updateRowInDom(row, slotData) {
+    if (!row || !slotData) return;
+
+    row.classList.toggle("is-distributed", Boolean(slotData.distributed));
+    row.classList.toggle("is-blank", Boolean(slotData.blank));
+
+    if (slotData.uuid) {
+      row.setAttribute("draggable", "true");
+      row.dataset.uuid = slotData.uuid;
+    } else {
+      row.removeAttribute("draggable");
+      delete row.dataset.uuid;
+    }
+
+    const levelEl = row.querySelector(".slot-level");
+    if (levelEl) {
+      levelEl.textContent = slotData.level ? `Lv ${slotData.level}` : slotData.type === "treasure" ? "GP" : "Lv 0";
+    }
+
+    const mainEl = row.querySelector(".slot-main");
+    if (mainEl) {
+      const existingIcon = mainEl.querySelector(".slot-item-icon, .slot-icon-placeholder");
+      if (existingIcon) {
+        if (slotData.img) {
+          const img = document.createElement("img");
+          img.className = "slot-item-icon";
+          img.src = slotData.img;
+          img.alt = slotData.name || "";
+          img.loading = "lazy";
+          existingIcon.replaceWith(img);
+        } else {
+          const span = document.createElement("span");
+          span.className = "slot-icon-placeholder";
+          span.innerHTML = '<i class="fa-solid fa-cube"></i>';
+          existingIcon.replaceWith(span);
+        }
+      }
+
+      const existingName = mainEl.querySelector(".slot-name");
+      if (existingName) {
+        if (slotData.uuid) {
+          const link = document.createElement("a");
+          link.className = "slot-name item-link";
+          link.dataset.action = "openItemSheet";
+          link.dataset.uuid = slotData.uuid;
+          link.textContent = slotData.name;
+          existingName.replaceWith(link);
+        } else {
+          const span = document.createElement("span");
+          span.className = `slot-name ${slotData.blank ? "blank-slot" : "unrolled"}`;
+          span.textContent = slotData.name;
+          existingName.replaceWith(span);
+        }
+      }
+
+      const rarityBadge = mainEl.querySelector(".rarity-badge");
+      if (rarityBadge && slotData.rarity) {
+        rarityBadge.className = `rarity-badge rarity-${slotData.rarity.toLowerCase()}`;
+        rarityBadge.textContent = slotData.rarity;
+      }
+    }
+
+    const priceEl = row.querySelector(".slot-price");
+    if (priceEl) {
+      priceEl.textContent = slotData.price || "";
+    }
+
+    const checkbox = row.querySelector(".distribute-checkbox");
+    if (checkbox) {
+      checkbox.checked = Boolean(slotData.distributed);
+    }
+
+    const sendBtn = row.querySelector("[data-action='sendRollerItemToBonus']");
+    if (sendBtn) {
+      sendBtn.disabled = Boolean(slotData.blank);
+    }
   }
 
   async _prepareContext() {
@@ -484,7 +709,6 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       };
     });
 
-    const clutterPack = getClutterPack();
     const roller = flagData.randomRoller || createDefaultRandomRollerState();
 
     return {
@@ -493,7 +717,6 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       activeTab: this.activeTab,
       isRandomRollerTab: this.activeTab === "randomRoller",
       levels,
-      clutterPackAvailable: Boolean(clutterPack),
       hasFundamentalRunes:
         Array.isArray(currentLevelData.fundamentalRunes) &&
         currentLevelData.fundamentalRunes.length > 0,
@@ -518,151 +741,171 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     };
   }
 
+  async _preRender(context, options) {
+    await super._preRender(context, options);
+    const currentScroll = this.element?.querySelector(".treasure-sections-scroll")?.scrollTop;
+    if (typeof currentScroll === "number" && currentScroll >= 0) {
+      this._savedScrollTop = currentScroll;
+    }
+  }
+
   /**
-   * Wire HTML5 Drag-and-Drop (both dragging items OUT into a PF2e Loot Actor sheet
-   * and dragging items FROM Compendiums/Sidebar INTO any container or blank slot in the tracker)
+   * Wire lightweight delegated HTML5 Drag-and-Drop listeners
    */
   _onRender(context, options) {
     super._onRender(context, options);
     const root = this.element;
     if (!root) return;
 
-    // 1. Outgoing dragstart: Allow dragging items into PF2e Loot Containers / Actor Sheets
-    const draggableRows = root.querySelectorAll(".loot-row[draggable='true']");
-    for (const row of draggableRows) {
-      row.addEventListener("dragstart", (event) => {
-        const uuid = row.dataset.uuid;
-        if (!uuid) return;
-        const dragPayload = {
-          type: "Item",
-          uuid
-        };
-        event.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-      });
+    // 0. Restore and track scroll position of .treasure-sections-scroll
+    const scrollContainer = root.querySelector(".treasure-sections-scroll");
+    if (scrollContainer) {
+      const targetScroll = this._savedScrollTop || 0;
+      if (targetScroll > 0) {
+        scrollContainer.scrollTop = targetScroll;
+        requestAnimationFrame(() => {
+          scrollContainer.scrollTop = targetScroll;
+        });
+      }
+      scrollContainer.addEventListener(
+        "scroll",
+        () => {
+          this._savedScrollTop = scrollContainer.scrollTop;
+        },
+        { passive: true }
+      );
     }
 
-    // 2. Incoming dragover / drop: Allow dragging Foundry Items into any container or slot in this window
-    const containers = root.querySelectorAll(".loot-container[data-drop-category]");
-    for (const container of containers) {
-      container.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        container.classList.add("drag-hover");
-      });
-      container.addEventListener("dragleave", () => {
-        container.classList.remove("drag-hover");
-      });
-      container.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        container.classList.remove("drag-hover");
-        if (!game.user?.isGM) return;
+    // Bind delegated dragstart / dragover / drop once on the root element
+    if (root.dataset.dragDelegated === "true") return;
+    root.dataset.dragDelegated = "true";
 
-        let data;
-        try {
-          data = JSON.parse(event.dataTransfer.getData("text/plain"));
-        } catch {
+    root.addEventListener("dragstart", (event) => {
+      const row = event.target.closest(".loot-row[draggable='true']");
+      if (!row) return;
+      const uuid = row.dataset.uuid;
+      if (!uuid) return;
+      event.dataTransfer.setData("text/plain", JSON.stringify({ type: "Item", uuid }));
+    });
+
+    root.addEventListener("dragover", (event) => {
+      const container = event.target.closest(".loot-container[data-drop-category]");
+      if (!container) return;
+      event.preventDefault();
+      container.classList.add("drag-hover");
+    });
+
+    root.addEventListener("dragleave", (event) => {
+      const container = event.target.closest(".loot-container[data-drop-category]");
+      if (!container) return;
+      if (!container.contains(event.relatedTarget)) {
+        container.classList.remove("drag-hover");
+      }
+    });
+
+    root.addEventListener("drop", async (event) => {
+      const container = event.target.closest(".loot-container[data-drop-category]");
+      if (!container) return;
+      event.preventDefault();
+      container.classList.remove("drag-hover");
+      if (!game.user?.isGM) return;
+
+      let data;
+      try {
+        data = JSON.parse(event.dataTransfer.getData("text/plain"));
+      } catch {
+        return;
+      }
+      if (data?.type !== "Item" || !data.uuid) return;
+
+      const doc = await fromUuid(data.uuid);
+      if (!doc) return;
+
+      const category = container.dataset.dropCategory;
+      const itemLevel = doc.system?.level?.value ?? this.activeLevel;
+      const priceStr = formatItemPrice(doc);
+
+      const flagData = await this.ensureFlagStructure();
+      const targetList =
+        category === "randomRoller"
+          ? flagData.randomRoller?.items
+          : flagData[this.activeLevel]?.[category];
+      if (!Array.isArray(targetList)) return;
+
+      const targetRow = event.target.closest(".loot-row[data-index]");
+      const newEntry = {
+        uuid: doc.uuid,
+        img: doc.img || "",
+        name: doc.name,
+        level: itemLevel,
+        price: priceStr,
+        rarity: (doc.system?.traits?.rarity || "common").toLowerCase(),
+        type:
+          doc.type === "consumable"
+            ? "consumable"
+            : doc.type === "treasure"
+            ? "treasure"
+            : "permanent",
+        blank: false,
+        distributed: false
+      };
+
+      if (targetRow) {
+        const rowIndex = Number(targetRow.dataset.index);
+        if (targetList[rowIndex]) {
+          targetList[rowIndex] = {
+            ...targetList[rowIndex],
+            ...newEntry
+          };
+          this._updateRowInDom(targetRow, targetList[rowIndex]);
+          this._updateLevelProgressInDom(this.activeLevel, flagData[this.activeLevel]);
+          await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
           return;
         }
-        if (data?.type !== "Item" || !data.uuid) return;
+      }
 
-        const doc = await fromUuid(data.uuid);
-        if (!doc) return;
-
-        const category = container.dataset.dropCategory;
-        const itemLevel = doc.system?.level?.value ?? this.activeLevel;
-        const priceStr = formatItemPrice(doc);
-
-        const flagData = await this.ensureFlagStructure();
-        const targetList =
-          category === "randomRoller"
-            ? flagData.randomRoller?.items
-            : flagData[this.activeLevel]?.[category];
-        if (!Array.isArray(targetList)) return;
-
-        // If dropped onto a specific slot row, replace that slot; otherwise append
-        const targetRow = event.target.closest(".loot-row[data-index]");
-        const newEntry = {
-          uuid: doc.uuid,
-          img: doc.img || "",
-          name: doc.name,
-          level: itemLevel,
-          price: priceStr,
-          rarity: (doc.system?.traits?.rarity || "common").toLowerCase(),
-          type:
-            doc.type === "consumable"
-              ? "consumable"
-              : doc.type === "treasure"
-              ? "treasure"
-              : "permanent",
-          blank: false,
-          distributed: false
-        };
-
-        if (targetRow) {
-          const rowIndex = Number(targetRow.dataset.index);
-          if (targetList[rowIndex]) {
-            targetList[rowIndex] = {
-              ...targetList[rowIndex],
-              ...newEntry
-            };
-          } else {
-            targetList.push(newEntry);
-          }
-        } else {
-          targetList.push(newEntry);
-        }
-
-        await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
-        await this.render();
-      });
-    }
+      targetList.push(newEntry);
+      await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
+      await this.render();
+    });
   }
 
   static async #onSelectLevel(event, target) {
+    const newLevel = Number(target.dataset.level) || 1;
+    if (this.activeTab !== "level" || this.activeLevel !== newLevel) {
+      this._savedScrollTop = 0;
+    }
     this.activeTab = "level";
-    this.activeLevel = Number(target.dataset.level) || 1;
+    this.activeLevel = newLevel;
     await this.render();
   }
 
   static async #onSelectRandomRollerTab() {
+    if (this.activeTab !== "randomRoller") {
+      this._savedScrollTop = 0;
+    }
     this.activeTab = "randomRoller";
     await this.render();
   }
 
   /**
-   * Section 1 Button: Generate Mandatory Permanent Items for the active level
+   * Section 1 Button: Generate Mandatory Permanent Items for the active level (O(1) cached lookup)
    */
   static async #onGeneratePermanent() {
     if (!game.user?.isGM) return;
     const level = this.activeLevel;
     const spec = PARTY_TREASURE_MATRIX[level];
-    const pack = game.packs.get("pf2e.equipment-srd");
-    if (!pack) {
+    const eqCache = await getEquipmentCache();
+    if (!eqCache) {
       ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
       return;
     }
 
-    const index = await pack.getIndex({
-      fields: ["img", "system.level.value", "system.price.value", "type", "system.traits.rarity"]
-    });
-
-    const pickRandom = (itemLevel) => {
-      const pool = index.filter((entry) => {
-        const entryLvl = entry.system?.level?.value ?? 0;
-        const rarity = entry.system?.traits?.rarity ?? "common";
-        return (
-          entryLvl === itemLevel &&
-          ["weapon", "armor", "equipment", "shield"].includes(entry.type) &&
-          rarity === "common"
-        );
-      });
-      if (!pool.length) return null;
-      return pool[Math.floor(Math.random() * pool.length)];
-    };
-
     const permanentItems = [];
     for (const slotGroup of spec.permanent) {
+      const pool = eqCache.commonPermanentByLevel.get(slotGroup.level) || [];
       for (let i = 0; i < slotGroup.count; i++) {
-        const doc = pickRandom(slotGroup.level);
+        const doc = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
         permanentItems.push({
           uuid: doc ? doc.uuid : "",
           img: doc?.img || "",
@@ -683,36 +926,23 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   /**
-   * Section 2 Button: Generate Mandatory Consumables for the active level
+   * Section 2 Button: Generate Mandatory Consumables for the active level (O(1) cached lookup)
    */
   static async #onGenerateConsumables() {
     if (!game.user?.isGM) return;
     const level = this.activeLevel;
     const spec = PARTY_TREASURE_MATRIX[level];
-    const pack = game.packs.get("pf2e.equipment-srd");
-    if (!pack) {
+    const eqCache = await getEquipmentCache();
+    if (!eqCache) {
       ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
       return;
     }
 
-    const index = await pack.getIndex({
-      fields: ["img", "system.level.value", "system.price.value", "type", "system.traits.rarity"]
-    });
-
-    const pickRandom = (itemLevel) => {
-      const pool = index.filter((entry) => {
-        const entryLvl = entry.system?.level?.value ?? 0;
-        const rarity = entry.system?.traits?.rarity ?? "common";
-        return entryLvl === itemLevel && entry.type === "consumable" && rarity === "common";
-      });
-      if (!pool.length) return null;
-      return pool[Math.floor(Math.random() * pool.length)];
-    };
-
     const consumables = [];
     for (const slotGroup of spec.consumables) {
+      const pool = eqCache.commonConsumablesByLevel.get(slotGroup.level) || [];
       for (let i = 0; i < slotGroup.count; i++) {
-        const doc = pickRandom(slotGroup.level);
+        const doc = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
         consumables.push({
           uuid: doc ? doc.uuid : "",
           img: doc?.img || "",
@@ -735,28 +965,16 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   /**
    * Section 3 Button: Generate Currency / Valuables
    * Randomly splits the target currency GP between Treasure items and Gold Coins (GP)
-   * so that the total sum strictly equals spec.currencyGp.
    */
   static async #onGenerateCurrency() {
     if (!game.user?.isGM) return;
     const level = this.activeLevel;
     const spec = PARTY_TREASURE_MATRIX[level];
-    const pack = game.packs.get("pf2e.equipment-srd");
-    if (!pack) {
+    const eqCache = await getEquipmentCache();
+    if (!eqCache) {
       ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
       return;
     }
-
-    const index = await pack.getIndex({
-      fields: ["img", "system.level.value", "system.price.value", "type", "system.traits.rarity"]
-    });
-
-    const coinNames = ["copper pieces", "silver pieces", "gold pieces", "platinum pieces"];
-    const treasures = index.filter((e) => {
-      const gpVal = e.system?.price?.value?.gp ?? 0;
-      const isCoin = coinNames.includes((e.name || "").toLowerCase());
-      return e.type === "treasure" && !isCoin && gpVal > 0 && gpVal < spec.currencyGp;
-    });
 
     const currency = [];
     const splitRatio = 0.3 + Math.random() * 0.45;
@@ -766,27 +984,25 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
 
     while (treasureBudget > 0 && attempts < 6) {
       attempts++;
-      const affordable = treasures.filter(
-        (t) =>
-          (t.system?.price?.value?.gp ?? 0) <= treasureBudget &&
-          (t.system?.price?.value?.gp ?? 0) >= Math.max(1, Math.floor(treasureBudget * 0.15))
+      const minGp = Math.max(1, Math.floor(treasureBudget * 0.15));
+      const affordable = eqCache.treasures.filter(
+        (t) => t.gpVal <= treasureBudget && t.gpVal >= minGp
       );
       if (!affordable.length) break;
 
       const chosen = affordable[Math.floor(Math.random() * affordable.length)];
-      const gpPrice = chosen.system.price.value.gp;
       currency.push({
-        uuid: chosen.uuid,
-        img: chosen.img || "",
-        name: chosen.name,
-        level: chosen.system?.level?.value ?? 1,
-        price: `${gpPrice.toLocaleString()} gp`,
+        uuid: chosen.entry.uuid,
+        img: chosen.entry.img || "",
+        name: chosen.entry.name,
+        level: chosen.entry.system?.level?.value ?? 1,
+        price: `${chosen.gpVal.toLocaleString()} gp`,
         type: "treasure",
         blank: false,
         distributed: false
       });
-      treasureBudget -= gpPrice;
-      totalSpentOnTreasure += gpPrice;
+      treasureBudget -= chosen.gpVal;
+      totalSpentOnTreasure += chosen.gpVal;
     }
 
     const remainingGoldGp = spec.currencyGp - totalSpentOnTreasure;
@@ -810,20 +1026,15 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   /**
-   * Section 4 Button: Generate Clutter Loot from `world.clutter` compendium
+   * Section 5 Button: Generate Clutter Loot from `world.clutter` compendium
    */
   static async #onGenerateClutter() {
     if (!game.user?.isGM) return;
-    const pack = getClutterPack();
-    if (!pack) {
+    const entries = await getClutterEntries();
+    if (!entries) {
       ui.notifications.warn("Compendium 'world.clutter' was not found in this world.");
       return;
     }
-
-    const index = await pack.getIndex({
-      fields: ["img", "system.level.value", "system.price.value", "type", "system.traits.rarity"]
-    });
-    const entries = Array.from(index);
     if (!entries.length) {
       ui.notifications.warn("Compendium 'world.clutter' is currently empty.");
       return;
@@ -831,8 +1042,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
 
     const flagData = await this.ensureFlagStructure();
     const level = this.activeLevel;
-    const existingCount = flagData[level]?.clutterLoot?.length || DEFAULT_CLUTTER_SLOTS;
-    const slotCount = Math.max(1, existingCount);
+    const slotCount = Math.max(1, flagData[level]?.clutterLoot?.length || DEFAULT_CLUTTER_SLOTS);
 
     const clutterLoot = [];
     for (let i = 0; i < slotCount; i++) {
@@ -855,13 +1065,13 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   /**
-   * Adds an extra Clutter slot (and immediately rolls an item from `world.clutter` if available)
+   * Adds an extra Clutter slot
    */
   static async #onAddClutterSlot() {
     if (!game.user?.isGM) return;
     const flagData = await this.ensureFlagStructure();
     const level = this.activeLevel;
-    const pack = getClutterPack();
+    const entries = await getClutterEntries();
 
     let newSlot = {
       uuid: "",
@@ -874,24 +1084,18 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       distributed: false
     };
 
-    if (pack) {
-      const index = await pack.getIndex({
-        fields: ["img", "system.level.value", "system.price.value", "type"]
-      });
-      const entries = Array.from(index);
-      if (entries.length > 0) {
-        const picked = entries[Math.floor(Math.random() * entries.length)];
-        newSlot = {
-          uuid: picked.uuid,
-          img: picked.img || "",
-          name: picked.name,
-          level: picked.system?.level?.value ?? 0,
-          price: formatItemPrice(picked),
-          type: "clutter",
-          blank: false,
-          distributed: false
-        };
-      }
+    if (entries && entries.length > 0) {
+      const picked = entries[Math.floor(Math.random() * entries.length)];
+      newSlot = {
+        uuid: picked.uuid,
+        img: picked.img || "",
+        name: picked.name,
+        level: picked.system?.level?.value ?? 0,
+        price: formatItemPrice(picked),
+        type: "clutter",
+        blank: false,
+        distributed: false
+      };
     }
 
     flagData[level].clutterLoot.push(newSlot);
@@ -900,7 +1104,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   /**
-   * Toggles the `distributed` state of an item via its checkbox
+   * Toggles the `distributed` state of an item via its checkbox in-place (zero window re-render)
    */
   static async #onToggleDistribute(event, target) {
     if (!game.user?.isGM) return;
@@ -913,13 +1117,24 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     const idx = Number(index);
     if (!Array.isArray(list) || !list[idx]) return;
 
-    list[idx].distributed = !list[idx].distributed;
+    const newDistributed = !list[idx].distributed;
+    list[idx].distributed = newDistributed;
+    target.checked = newDistributed;
+
+    const row = target.closest(".loot-row");
+    if (row) {
+      row.classList.toggle("is-distributed", newDistributed);
+    }
+
+    if (category !== "randomRoller") {
+      this._updateLevelProgressInDom(this.activeLevel, flagData[this.activeLevel]);
+    }
+
     await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
-    await this.render();
   }
 
   /**
-   * Rerolls a single item slot in place
+   * Rerolls a single item slot in-place in the DOM (zero full window re-render)
    */
   static async #onRerollItem(event, target) {
     if (!game.user?.isGM) return;
@@ -936,15 +1151,11 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     const targetLevel = Number(currentSlot.level ?? this.activeLevel);
 
     if (category === "clutterLoot") {
-      const clutterPack = getClutterPack();
-      if (!clutterPack) {
+      const entries = await getClutterEntries();
+      if (!entries) {
         ui.notifications.warn("Compendium 'world.clutter' was not found in this world.");
         return;
       }
-      const indexData = await clutterPack.getIndex({
-        fields: ["img", "system.level.value", "system.price.value", "type"]
-      });
-      const entries = Array.from(indexData);
       if (!entries.length) {
         ui.notifications.warn("Compendium 'world.clutter' is empty.");
         return;
@@ -964,21 +1175,12 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       const templates = FUNDAMENTAL_RUNES_BY_LEVEL[this.activeLevel] || [];
       const templateRune = templates[Math.floor(idx / 4)] || templates[0];
       const runeName = currentSlot.runeTemplateName || templateRune?.name || currentSlot.name;
-      const pack = game.packs.get("pf2e.equipment-srd");
-      let resolvedUuid = "";
-      let resolvedImg = "";
-      if (pack && runeName) {
-        const indexData = await pack.getIndex({ fields: ["name", "img"] });
-        const match = indexData.find((e) => e.name.toLowerCase() === runeName.toLowerCase());
-        if (match) {
-          resolvedUuid = match.uuid;
-          resolvedImg = match.img || "";
-        }
-      }
+      const eqCache = await getEquipmentCache();
+      const match = eqCache && runeName ? eqCache.byNameLower.get(runeName.toLowerCase()) : null;
       list[idx] = {
         ...currentSlot,
-        uuid: resolvedUuid,
-        img: resolvedImg,
+        uuid: match?.uuid || "",
+        img: match?.img || "",
         name: runeName,
         runeTemplateName: runeName,
         level: templateRune?.level ?? targetLevel,
@@ -989,10 +1191,10 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
         distributed: false
       };
     } else if (category === "randomRoller") {
-      const pack = game.packs.get("pf2e.equipment-srd");
-      if (!pack) return;
+      const eqCache = await getEquipmentCache();
+      if (!eqCache) return;
       const roller = flagData.randomRoller || createDefaultRandomRollerState();
-      const candidates = await PartyTreasureTrackerApp.#queryRollerCandidates(pack, roller);
+      const candidates = PartyTreasureTrackerApp.#filterCachedRollerCandidates(eqCache, roller);
       if (!candidates.length) {
         ui.notifications.warn("No matching items found for current filter settings.");
         return;
@@ -1012,39 +1214,20 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
         };
       }
     } else {
-      // permanentItems, consumables, currency, or bonusLoot
-      const pack = game.packs.get("pf2e.equipment-srd");
-      if (!pack) {
+      const eqCache = await getEquipmentCache();
+      if (!eqCache) {
         ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
         return;
       }
-      const indexData = await pack.getIndex({
-        fields: ["img", "system.level.value", "system.price.value", "type", "system.traits.rarity"]
-      });
 
       let pool = [];
       if (category === "consumables") {
-        pool = indexData.filter(
-          (e) =>
-            (e.system?.level?.value ?? 0) === targetLevel &&
-            e.type === "consumable" &&
-            (e.system?.traits?.rarity ?? "common") === "common"
-        );
+        pool = eqCache.commonConsumablesByLevel.get(targetLevel) || [];
       } else if (category === "currency") {
         const spec = PARTY_TREASURE_MATRIX[this.activeLevel];
-        const coinNames = ["copper pieces", "silver pieces", "gold pieces", "platinum pieces"];
-        pool = indexData.filter((e) => {
-          const gpVal = e.system?.price?.value?.gp ?? 0;
-          const isCoin = coinNames.includes((e.name || "").toLowerCase());
-          return e.type === "treasure" && !isCoin && gpVal > 0 && gpVal <= spec.currencyGp;
-        });
+        pool = eqCache.treasures.filter((t) => t.gpVal <= spec.currencyGp).map((t) => t.entry);
       } else {
-        pool = indexData.filter(
-          (e) =>
-            (e.system?.level?.value ?? 0) === targetLevel &&
-            ["weapon", "armor", "equipment", "shield"].includes(e.type) &&
-            (e.system?.traits?.rarity ?? "common") === "common"
-        );
+        pool = eqCache.commonPermanentByLevel.get(targetLevel) || [];
       }
 
       if (!pool.length) {
@@ -1065,12 +1248,20 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
       };
     }
 
+    // Update row & progress directly in the DOM without full window re-render
+    const row = target.closest(".loot-row");
+    if (row) {
+      this._updateRowInDom(row, list[idx]);
+    }
+    if (category !== "randomRoller") {
+      this._updateLevelProgressInDom(this.activeLevel, flagData[this.activeLevel]);
+    }
+
     await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
-    await this.render();
   }
 
   /**
-   * Deletes an individual item, leaving its slot blank so another item can be dragged in or rerolled
+   * Clears an individual item to a blank slot in-place in the DOM (zero full window re-render unless removing an empty bonus row)
    */
   static async #onClearItem(event, target) {
     if (!game.user?.isGM) return;
@@ -1085,29 +1276,38 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
 
     const current = list[idx];
 
-    // If a bonusLoot slot is already blank and clicked again, remove the extra row
     if (category === "bonusLoot" && current.blank) {
       list.splice(idx, 1);
-    } else {
-      list[idx] = {
-        uuid: "",
-        img: "",
-        name: "[Blank Slot]",
-        level: current.level ?? this.activeLevel,
-        price: "",
-        type: current.type || "permanent",
-        playerLabel: current.playerLabel || "",
-        runeTemplateName:
-          current.runeTemplateName || (category === "fundamentalRunes" ? current.name : ""),
-        usage: current.usage || "",
-        rarity: current.rarity || "",
-        blank: true,
-        distributed: false
-      };
+      await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
+      await this.render();
+      return;
+    }
+
+    list[idx] = {
+      uuid: "",
+      img: "",
+      name: "[Blank Slot]",
+      level: current.level ?? this.activeLevel,
+      price: "",
+      type: current.type || "permanent",
+      playerLabel: current.playerLabel || "",
+      runeTemplateName:
+        current.runeTemplateName || (category === "fundamentalRunes" ? current.name : ""),
+      usage: current.usage || "",
+      rarity: current.rarity || "",
+      blank: true,
+      distributed: false
+    };
+
+    const row = target.closest(".loot-row");
+    if (row) {
+      this._updateRowInDom(row, list[idx]);
+    }
+    if (category !== "randomRoller") {
+      this._updateLevelProgressInDom(this.activeLevel, flagData[this.activeLevel]);
     }
 
     await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
-    await this.render();
   }
 
   /**
@@ -1167,20 +1367,9 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   /**
-   * Helper to query candidate items from `pf2e.equipment-srd` for the Random Loot Roller tab
+   * Fast synchronous filter over the pre-indexed `rollerPool` cache
    */
-  static async #queryRollerCandidates(pack, { trait, minLevel, maxLevel, maxRarity }) {
-    const index = await pack.getIndex({
-      fields: [
-        "img",
-        "system.level.value",
-        "system.price.value",
-        "type",
-        "system.traits.rarity",
-        "system.traits.value"
-      ]
-    });
-
+  static #filterCachedRollerCandidates(eqCache, { trait, minLevel, maxLevel, maxRarity }) {
     const maxRarityIdx = RARITY_ORDER.indexOf(maxRarity);
     const allowedRarities = new Set(
       RARITY_ORDER.slice(0, maxRarityIdx >= 0 ? maxRarityIdx + 1 : 4)
@@ -1188,30 +1377,20 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     const normalizedTrait = (trait || "").trim().toLowerCase();
     const normalizedTraitSlug = normalizedTrait.replace(/\s+/g, "-");
 
-    return index.filter((entry) => {
-      if (!["weapon", "armor", "equipment", "shield", "consumable", "treasure", "backpack"].includes(entry.type)) {
-        return false;
-      }
-      const lvl = Number(entry.system?.level?.value ?? 0);
-      if (lvl < minLevel || lvl > maxLevel) return false;
-
-      const rarity = (entry.system?.traits?.rarity || "common").toLowerCase();
-      if (!allowedRarities.has(rarity)) return false;
+    return eqCache.rollerPool.filter((item) => {
+      if (item.level < minLevel || item.level > maxLevel) return false;
+      if (!allowedRarities.has(item.rarity)) return false;
 
       if (normalizedTrait) {
-        const traitsArr = Array.isArray(entry.system?.traits?.value)
-          ? entry.system.traits.value.map((t) => String(t).toLowerCase())
-          : [];
         const matchesTrait =
-          traitsArr.some(
+          item.traitsLower.some(
             (t) =>
               t === normalizedTrait ||
               t === normalizedTraitSlug ||
               t.includes(normalizedTraitSlug)
-          ) || entry.type.toLowerCase() === normalizedTrait;
+          ) || item.typeLower === normalizedTrait;
         if (!matchesTrait) return false;
       }
-
       return true;
     });
   }
@@ -1232,13 +1411,13 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     const maxRarity = (form.querySelector("[name='rollerMaxRarity']")?.value || "rare").toLowerCase();
     const count = Math.max(1, Math.min(50, Number(form.querySelector("[name='rollerCount']")?.value) || 5));
 
-    const pack = game.packs.get("pf2e.equipment-srd");
-    if (!pack) {
+    const eqCache = await getEquipmentCache();
+    if (!eqCache) {
       ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
       return;
     }
 
-    const candidates = await PartyTreasureTrackerApp.#queryRollerCandidates(pack, {
+    const candidates = PartyTreasureTrackerApp.#filterCachedRollerCandidates(eqCache, {
       trait,
       minLevel,
       maxLevel,
@@ -1315,7 +1494,6 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     });
     await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
     ui.notifications.info(`Added "${item.name}" to Level ${this.activeLevel} Bonus Loot.`);
-    await this.render();
   }
 
   static async #onOpenItemSheet(event, target) {
