@@ -1,0 +1,613 @@
+<div class="pf2e-treasure-tracker">
+  <!-- Top Tab Navigation: Levels 1–20 + Random Loot Roller Tab -->
+  <div class="top-nav-wrapper">
+    <nav class="level-tabs" aria-label="Party Levels 1 to 20">
+      {{#each levels}}
+        <button type="button"
+                class="level-tab {{#if this.active}}active{{/if}}"
+                data-action="selectLevel"
+                data-level="{{this.level}}">
+          <span class="tab-lvl">Level {{this.level}}</span>
+          <span class="tab-prog">{{this.progress}}</span>
+        </button>
+      {{/each}}
+    </nav>
+    <button type="button"
+            class="random-roller-tab-btn {{#if isRandomRollerTab}}active{{/if}}"
+            data-action="selectRandomRollerTab">
+      <i class="fa-solid fa-dice"></i>
+      <span>Random Loot Roller</span>
+    </button>
+  </div>
+
+  {{#if isRandomRollerTab}}
+    <!-- TAB VIEW: Weighted Random Loot Roller -->
+    <header class="treasure-toolbar">
+      <div class="prescription-summary">
+        <h2>Random Loot Roller &mdash; Weighted by Rarity</h2>
+        <p>
+          Filter by optional PF2e Trait, Level Range, and Max Rarity. Rolled items are weighted by rarity (Common 70%, Uncommon 20%, Rare 8%, Unique 2%).
+        </p>
+      </div>
+      <div class="drag-hint">
+        <i class="fa-solid fa-hand-pointer"></i> Drag rolled items directly into any Loot or Character sheet
+      </div>
+    </header>
+
+    <div class="treasure-sections-scroll">
+      <section class="loot-container" data-drop-category="randomRoller">
+        <div class="random-roller-form">
+          <div class="roller-field">
+            <label>Trait (Optional)</label>
+            <input type="text"
+                   name="rollerTrait"
+                   list="pf2e-common-traits-list"
+                   value="{{randomRoller.trait}}"
+                   placeholder="e.g. magical, healing, alchemical, potion..." />
+            <datalist id="pf2e-common-traits-list">
+              <option value="magical"></option>
+              <option value="alchemical"></option>
+              <option value="healing"></option>
+              <option value="potion"></option>
+              <option value="elixir"></option>
+              <option value="scroll"></option>
+              <option value="wand"></option>
+              <option value="staff"></option>
+              <option value="talisman"></option>
+              <option value="invested"></option>
+              <option value="tattoo"></option>
+              <option value="spellheart"></option>
+              <option value="grimoire"></option>
+              <option value="mutagen"></option>
+              <option value="oil"></option>
+              <option value="poison"></option>
+              <option value="precious"></option>
+              <option value="fire"></option>
+              <option value="cold"></option>
+              <option value="electricity"></option>
+              <option value="acid"></option>
+              <option value="vitality"></option>
+              <option value="void"></option>
+              <option value="mental"></option>
+              <option value="force"></option>
+              <option value="sonic"></option>
+              <option value="spirit"></option>
+            </datalist>
+          </div>
+
+          <div class="roller-field">
+            <label>Min Level</label>
+            <input type="number" name="rollerMinLevel" min="0" max="25" value="{{randomRoller.minLevel}}" />
+          </div>
+
+          <div class="roller-field">
+            <label>Max Level</label>
+            <input type="number" name="rollerMaxLevel" min="0" max="25" value="{{randomRoller.maxLevel}}" />
+          </div>
+
+          <div class="roller-field">
+            <label>Max Rarity</label>
+            <select name="rollerMaxRarity">
+              {{#each randomRoller.rarityOptions}}
+                <option value="{{this.value}}" {{#if this.selected}}selected{{/if}}>{{this.label}}</option>
+              {{/each}}
+            </select>
+          </div>
+
+          <div class="roller-field">
+            <label># of Items</label>
+            <input type="number" name="rollerCount" min="1" max="50" value="{{randomRoller.count}}" />
+          </div>
+
+          <div class="roller-form-buttons">
+            <button type="button" class="btn-section-roll" data-action="rollCustomLoot">
+              <i class="fa-solid fa-dice-d20"></i> Roll Random Loot
+            </button>
+            {{#if randomRoller.items.length}}
+              <button type="button" class="btn-icon-action" title="Clear all rolled items" data-action="clearCustomLootResults">
+                <i class="fa-solid fa-broom"></i>
+              </button>
+            {{/if}}
+          </div>
+        </div>
+
+        {{#if randomRoller.items.length}}
+          <div class="slot-list">
+            {{#each randomRoller.items}}
+              <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                   data-index="{{@index}}"
+                   {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+                <div class="slot-meta">
+                  <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                  <span class="slot-level">Lv {{this.level}}</span>
+                </div>
+                <div class="slot-main">
+                  {{#if this.img}}
+                    <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                  {{else}}
+                    <span class="slot-icon-placeholder"><i class="fa-solid fa-cube"></i></span>
+                  {{/if}}
+                  {{#if this.uuid}}
+                    <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                  {{else}}
+                    <span class="slot-name {{#if this.blank}}blank-slot{{else}}unrolled{{/if}}">{{this.name}}</span>
+                  {{/if}}
+                  {{#if this.rarity}}
+                    <span class="rarity-badge rarity-{{this.rarity}}">{{this.rarity}}</span>
+                  {{/if}}
+                </div>
+                <span class="slot-price">{{this.price}}</span>
+                <div class="row-actions">
+                  <button type="button"
+                          class="btn-icon-action"
+                          title="Send to Level {{../activeLevel}} Bonus Loot"
+                          data-action="sendRollerItemToBonus"
+                          data-index="{{@index}}"
+                          {{#if this.blank}}disabled{{/if}}>
+                    <i class="fa-solid fa-file-import"></i>
+                  </button>
+                  <button type="button"
+                          class="btn-icon-action"
+                          title="Reroll this item"
+                          data-action="rerollItem"
+                          data-category="randomRoller"
+                          data-index="{{@index}}">
+                    <i class="fa-solid fa-dice"></i>
+                  </button>
+                  <button type="button"
+                          class="btn-icon-action btn-clear-slot"
+                          title="Delete item (leave slot blank)"
+                          data-action="clearItem"
+                          data-category="randomRoller"
+                          data-index="{{@index}}">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                  <label class="distribute-check" title="Mark as distributed">
+                    <input type="checkbox"
+                           class="distribute-checkbox"
+                           data-action="toggleDistribute"
+                           data-category="randomRoller"
+                           data-index="{{@index}}"
+                           {{#if this.distributed}}checked{{/if}} />
+                    <span>Distributed</span>
+                  </label>
+                </div>
+              </div>
+            {{/each}}
+          </div>
+        {{else}}
+          <p class="empty-section-note">
+            Set your desired Trait, Level Range, Max Rarity, and Number of Items above, then click <strong>Roll Random Loot</strong>.
+          </p>
+        {{/if}}
+      </section>
+    </div>
+
+  {{else}}
+    <!-- TAB VIEW: Level 1–20 Party Treasure Tracker -->
+    <header class="treasure-toolbar">
+      <div class="prescription-summary">
+        <h2>Level {{activeLevel}} Party Treasure Budget &mdash; {{prescription.totalGpFormatted}} gp Total</h2>
+        <p>
+          <strong>Permanent:</strong> {{prescription.permanentSummary}} &middot;
+          <strong>Consumables:</strong> {{prescription.consumableSummary}} &middot;
+          <strong>Currency:</strong> {{prescription.currencyGpFormatted}} gp (+{{prescription.extraPcGpFormatted}} gp / extra PC)
+        </p>
+        {{#if prescription.note}}
+          <p class="prescription-note">* {{prescription.note}}</p>
+        {{/if}}
+      </div>
+      <div class="drag-hint">
+        <i class="fa-solid fa-hand-pointer"></i> Drag items into any Loot sheet, or drop compendium items into any slot below
+      </div>
+    </header>
+
+    <div class="treasure-sections-scroll">
+      <!-- Container 1: Mandatory Permanent Items -->
+      <section class="loot-container" data-drop-category="permanentItems">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Mandatory Permanent Items</h3>
+            <span class="container-subtitle">{{prescription.permanentSummary}}</span>
+          </div>
+          <button type="button" class="btn-section-roll" data-action="generatePermanent">
+            <i class="fa-solid fa-dice-d20"></i> Generate Permanent Items
+          </button>
+        </div>
+        <div class="slot-list">
+          {{#each levelData.permanentItems}}
+            <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                 data-index="{{@index}}"
+                 {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+              <div class="slot-meta">
+                <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                <span class="slot-level">Lv {{this.level}}</span>
+              </div>
+              <div class="slot-main">
+                {{#if this.img}}
+                  <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                {{else}}
+                  <span class="slot-icon-placeholder"><i class="fa-solid fa-cube"></i></span>
+                {{/if}}
+                {{#if this.uuid}}
+                  <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                {{else}}
+                  <span class="slot-name {{#if this.blank}}blank-slot{{else}}unrolled{{/if}}">{{this.name}}</span>
+                {{/if}}
+              </div>
+              <span class="slot-price">{{this.price}}</span>
+              <div class="row-actions">
+                <button type="button"
+                        class="btn-icon-action"
+                        title="Reroll this item"
+                        data-action="rerollItem"
+                        data-category="permanentItems"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-dice"></i>
+                </button>
+                <button type="button"
+                        class="btn-icon-action btn-clear-slot"
+                        title="Delete item (leave slot blank)"
+                        data-action="clearItem"
+                        data-category="permanentItems"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <label class="distribute-check" title="Mark as distributed">
+                  <input type="checkbox"
+                         class="distribute-checkbox"
+                         data-action="toggleDistribute"
+                         data-category="permanentItems"
+                         data-index="{{@index}}"
+                         {{#if this.distributed}}checked{{/if}} />
+                  <span>Distributed</span>
+                </label>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </section>
+
+      <!-- Container 2: Mandatory Consumables -->
+      <section class="loot-container" data-drop-category="consumables">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Mandatory Consumables</h3>
+            <span class="container-subtitle">{{prescription.consumableSummary}}</span>
+          </div>
+          <button type="button" class="btn-section-roll" data-action="generateConsumables">
+            <i class="fa-solid fa-dice-d20"></i> Generate Consumables
+          </button>
+        </div>
+        <div class="slot-list">
+          {{#each levelData.consumables}}
+            <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                 data-index="{{@index}}"
+                 {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+              <div class="slot-meta">
+                <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                <span class="slot-level">Lv {{this.level}}</span>
+              </div>
+              <div class="slot-main">
+                {{#if this.img}}
+                  <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                {{else}}
+                  <span class="slot-icon-placeholder"><i class="fa-solid fa-flask"></i></span>
+                {{/if}}
+                {{#if this.uuid}}
+                  <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                {{else}}
+                  <span class="slot-name {{#if this.blank}}blank-slot{{else}}unrolled{{/if}}">{{this.name}}</span>
+                {{/if}}
+              </div>
+              <span class="slot-price">{{this.price}}</span>
+              <div class="row-actions">
+                <button type="button"
+                        class="btn-icon-action"
+                        title="Reroll this item"
+                        data-action="rerollItem"
+                        data-category="consumables"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-dice"></i>
+                </button>
+                <button type="button"
+                        class="btn-icon-action btn-clear-slot"
+                        title="Delete item (leave slot blank)"
+                        data-action="clearItem"
+                        data-category="consumables"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <label class="distribute-check" title="Mark as distributed">
+                  <input type="checkbox"
+                         class="distribute-checkbox"
+                         data-action="toggleDistribute"
+                         data-category="consumables"
+                         data-index="{{@index}}"
+                         {{#if this.distributed}}checked{{/if}} />
+                  <span>Distributed</span>
+                </label>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </section>
+
+      <!-- Container 3: Mandatory Currency / Valuables (Randomly Splits Treasure Items + GP) -->
+      <section class="loot-container" data-drop-category="currency">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Mandatory Currency / Valuables</h3>
+            <span class="container-subtitle">{{prescription.currencyGpFormatted}} gp Total (Randomly splits Treasure Items &amp; GP)</span>
+          </div>
+          <button type="button" class="btn-section-roll" data-action="generateCurrency">
+            <i class="fa-solid fa-coins"></i> Generate Currency &amp; Valuables
+          </button>
+        </div>
+        <div class="slot-list">
+          {{#each levelData.currency}}
+            <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                 data-index="{{@index}}"
+                 {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+              <div class="slot-meta">
+                <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                <span class="slot-level">{{#if this.level}}Lv {{this.level}}{{else}}GP{{/if}}</span>
+              </div>
+              <div class="slot-main">
+                {{#if this.img}}
+                  <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                {{else}}
+                  <span class="slot-icon-placeholder"><i class="fa-solid fa-coins"></i></span>
+                {{/if}}
+                {{#if this.uuid}}
+                  <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                {{else}}
+                  <span class="slot-name {{#if this.blank}}blank-slot{{else}}unrolled{{/if}}">{{this.name}}</span>
+                {{/if}}
+              </div>
+              <span class="slot-price">{{this.price}}</span>
+              <div class="row-actions">
+                <button type="button"
+                        class="btn-icon-action"
+                        title="Reroll this item"
+                        data-action="rerollItem"
+                        data-category="currency"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-dice"></i>
+                </button>
+                <button type="button"
+                        class="btn-icon-action btn-clear-slot"
+                        title="Delete item (leave slot blank)"
+                        data-action="clearItem"
+                        data-category="currency"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <label class="distribute-check" title="Mark as distributed">
+                  <input type="checkbox"
+                         class="distribute-checkbox"
+                         data-action="toggleDistribute"
+                         data-category="currency"
+                         data-index="{{@index}}"
+                         {{#if this.distributed}}checked{{/if}} />
+                  <span>Distributed</span>
+                </label>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </section>
+
+      <!-- Container 4: Fundamental Runes (4 Players per Rune Tier) -->
+      <section class="loot-container" data-drop-category="fundamentalRunes">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Fundamental Runes (4 Players)</h3>
+            <span class="container-subtitle">Mandatory Weapon Potency, Striking, Armor Potency &amp; Resilient Runes for each of the 4 players</span>
+          </div>
+        </div>
+        {{#if hasFundamentalRunes}}
+          <div class="slot-list">
+            {{#each levelData.fundamentalRunes}}
+              <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                   data-index="{{@index}}"
+                   {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+                <div class="slot-meta">
+                  <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                  <span class="slot-level">Lv {{this.level}}</span>
+                </div>
+                <div class="slot-main">
+                  {{#if this.img}}
+                    <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                  {{else}}
+                    <span class="slot-icon-placeholder"><i class="fa-solid fa-gem"></i></span>
+                  {{/if}}
+                  {{#if this.uuid}}
+                    <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                  {{else}}
+                    <span class="slot-name {{#if this.blank}}blank-slot{{/if}}">{{this.name}}</span>
+                  {{/if}}
+                  {{#if this.playerLabel}}
+                    <span class="rune-player-tag">{{this.playerLabel}}{{#if this.usage}} &middot; {{this.usage}}{{/if}}{{#if this.rarity}} ({{this.rarity}}){{/if}}</span>
+                  {{/if}}
+                </div>
+                <span class="slot-price">{{this.price}}</span>
+                <div class="row-actions">
+                  <button type="button"
+                          class="btn-icon-action"
+                          title="Restore / Reroll rune slot"
+                          data-action="rerollItem"
+                          data-category="fundamentalRunes"
+                          data-index="{{@index}}">
+                    <i class="fa-solid fa-dice"></i>
+                  </button>
+                  <button type="button"
+                          class="btn-icon-action btn-clear-slot"
+                          title="Delete item (leave slot blank)"
+                          data-action="clearItem"
+                          data-category="fundamentalRunes"
+                          data-index="{{@index}}">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                  <label class="distribute-check" title="Mark as distributed">
+                    <input type="checkbox"
+                           class="distribute-checkbox"
+                           data-action="toggleDistribute"
+                           data-category="fundamentalRunes"
+                           data-index="{{@index}}"
+                           {{#if this.distributed}}checked{{/if}} />
+                    <span>Distributed</span>
+                  </label>
+                </div>
+              </div>
+            {{/each}}
+          </div>
+        {{else}}
+          <p class="empty-section-note">
+            No new Fundamental Rune tier unlocks at Level {{activeLevel}}. (Fundamental Runes unlock at Levels 2, 4, 5, 8, 10, 11, 12, 14, 16, 18, 19, and 20).
+          </p>
+        {{/if}}
+      </section>
+
+      <!-- Container 5: Clutter Loot (world.clutter Compendium) -->
+      <section class="loot-container" data-drop-category="clutterLoot">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Clutter Loot</h3>
+            <span class="container-subtitle">Randomly selects clutter-tier items from Compendium <code>world.clutter</code></span>
+          </div>
+          <div class="header-button-group">
+            <button type="button" class="btn-icon-action" title="Add another Clutter slot" data-action="addClutterSlot">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+            <button type="button" class="btn-section-roll" data-action="generateClutter">
+              <i class="fa-solid fa-box-open"></i> Generate Clutter Loot
+            </button>
+          </div>
+        </div>
+        <div class="slot-list">
+          {{#each levelData.clutterLoot}}
+            <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                 data-index="{{@index}}"
+                 {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+              <div class="slot-meta">
+                <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                <span class="slot-level">Lv {{this.level}}</span>
+              </div>
+              <div class="slot-main">
+                {{#if this.img}}
+                  <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                {{else}}
+                  <span class="slot-icon-placeholder"><i class="fa-solid fa-box-open"></i></span>
+                {{/if}}
+                {{#if this.uuid}}
+                  <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                {{else}}
+                  <span class="slot-name {{#if this.blank}}blank-slot{{else}}unrolled{{/if}}">{{this.name}}</span>
+                {{/if}}
+              </div>
+              <span class="slot-price">{{this.price}}</span>
+              <div class="row-actions">
+                <button type="button"
+                        class="btn-icon-action"
+                        title="Reroll Clutter item from world.clutter"
+                        data-action="rerollItem"
+                        data-category="clutterLoot"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-dice"></i>
+                </button>
+                <button type="button"
+                        class="btn-icon-action btn-clear-slot"
+                        title="Delete item (leave slot blank)"
+                        data-action="clearItem"
+                        data-category="clutterLoot"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <label class="distribute-check" title="Mark as distributed">
+                  <input type="checkbox"
+                         class="distribute-checkbox"
+                         data-action="toggleDistribute"
+                         data-category="clutterLoot"
+                         data-index="{{@index}}"
+                         {{#if this.distributed}}checked{{/if}} />
+                  <span>Distributed</span>
+                </label>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </section>
+
+      <!-- Container 6: Bonus Loot & Extra GP -->
+      <section class="loot-container" data-drop-category="bonusLoot">
+        <div class="container-header">
+          <div class="container-title-group">
+            <h3>Bonus Loot &amp; Extra GP</h3>
+            <span class="container-subtitle">Drag items from Compendiums here or add custom entries below</span>
+          </div>
+        </div>
+        <div class="bonus-loot-form">
+          <input type="text" name="bonusName" placeholder="Item Name or Extra GP (e.g. +1 Returning Dagger or 50 gp)" />
+          <input type="text" name="bonusInput" placeholder="Compendium UUID (optional)" />
+          <input type="number" name="bonusLevel" min="0" max="20" value="{{activeLevel}}" />
+          <button type="button" class="btn-add-bonus" data-action="addBonusLoot">
+            <i class="fa-solid fa-plus"></i> Add Bonus Slot
+          </button>
+        </div>
+        <div class="slot-list">
+          {{#each levelData.bonusLoot}}
+            <div class="loot-row {{#if this.distributed}}is-distributed{{/if}} {{#if this.blank}}is-blank{{/if}}"
+                 data-index="{{@index}}"
+                 {{#if this.uuid}}draggable="true" data-uuid="{{this.uuid}}"{{/if}}>
+              <div class="slot-meta">
+                <i class="fa-solid fa-grip-vertical drag-handle" title="Drag to Loot container"></i>
+                <span class="slot-level">Lv {{this.level}}</span>
+              </div>
+              <div class="slot-main">
+                {{#if this.img}}
+                  <img class="slot-item-icon" src="{{this.img}}" alt="{{this.name}}" loading="lazy" />
+                {{else}}
+                  <span class="slot-icon-placeholder"><i class="fa-solid fa-cube"></i></span>
+                {{/if}}
+                {{#if this.uuid}}
+                  <a class="slot-name item-link" data-action="openItemSheet" data-uuid="{{this.uuid}}">{{this.name}}</a>
+                {{else}}
+                  <span class="slot-name {{#if this.blank}}blank-slot{{/if}}">{{this.name}}</span>
+                {{/if}}
+              </div>
+              <span class="slot-price">{{this.price}}</span>
+              <div class="row-actions">
+                <button type="button"
+                        class="btn-icon-action"
+                        title="Reroll this item"
+                        data-action="rerollItem"
+                        data-category="bonusLoot"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-dice"></i>
+                </button>
+                <button type="button"
+                        class="btn-icon-action btn-clear-slot"
+                        title="Delete item (leave slot blank; click again to remove blank bonus row)"
+                        data-action="clearItem"
+                        data-category="bonusLoot"
+                        data-index="{{@index}}">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+                <label class="distribute-check" title="Mark as distributed">
+                  <input type="checkbox"
+                         class="distribute-checkbox"
+                         data-action="toggleDistribute"
+                         data-category="bonusLoot"
+                         data-index="{{@index}}"
+                         {{#if this.distributed}}checked{{/if}} />
+                  <span>Distributed</span>
+                </label>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </section>
+    </div>
+  {{/if}}
+</div>

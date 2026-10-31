@@ -1,0 +1,428 @@
+.pf2e-treasure-tracker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Top Navigation Wrapper: 20-Level Grid + Random Loot Roller Tab Button */
+.pf2e-treasure-tracker .top-nav-wrapper {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .level-tabs {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 0.35rem;
+  flex: 1;
+}
+
+.pf2e-treasure-tracker .level-tab {
+  height: auto;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  line-height: 1.15;
+  border-radius: 5px;
+  cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.pf2e-treasure-tracker .level-tab .tab-lvl {
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: block;
+}
+
+.pf2e-treasure-tracker .level-tab .tab-prog {
+  font-size: 0.68rem;
+  opacity: 0.8;
+  display: block;
+}
+
+.pf2e-treasure-tracker .level-tab.active,
+.pf2e-treasure-tracker .random-roller-tab-btn.active {
+  background: #b45309;
+  color: #ffffff;
+  border-color: #f59e0b;
+}
+
+.pf2e-treasure-tracker .random-roller-tab-btn {
+  height: auto;
+  padding: 0.5rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .random-roller-tab-btn i {
+  font-size: 1.1rem;
+}
+
+/* Top Summary Header */
+.pf2e-treasure-tracker .treasure-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .prescription-summary h2 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.05rem;
+  border: none;
+}
+
+.pf2e-treasure-tracker .prescription-summary p {
+  margin: 0;
+  font-size: 0.82rem;
+  opacity: 0.92;
+}
+
+.pf2e-treasure-tracker .prescription-note {
+  color: #fbbf24;
+  margin-top: 0.25rem !important;
+}
+
+.pf2e-treasure-tracker .drag-hint {
+  font-size: 0.75rem;
+  opacity: 0.75;
+  text-align: right;
+  max-width: 220px;
+  line-height: 1.3;
+}
+
+/* Scrollable Containers Area */
+.pf2e-treasure-tracker .treasure-sections-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+  flex: 1;
+}
+
+.pf2e-treasure-tracker .loot-container {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  background: rgba(0, 0, 0, 0.14);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.pf2e-treasure-tracker .loot-container.drag-hover {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.pf2e-treasure-tracker .container-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.pf2e-treasure-tracker .container-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.pf2e-treasure-tracker .container-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  border: none;
+}
+
+.pf2e-treasure-tracker .container-subtitle {
+  font-size: 0.76rem;
+  opacity: 0.75;
+}
+
+.pf2e-treasure-tracker .header-button-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pf2e-treasure-tracker .btn-section-roll {
+  width: auto;
+  height: auto;
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* Clean 4-Column Row Layout with Item Icon */
+.pf2e-treasure-tracker .loot-row {
+  display: grid;
+  grid-template-columns: 5.25rem 1fr auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+}
+
+.pf2e-treasure-tracker .loot-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pf2e-treasure-tracker .loot-row:last-child {
+  border-bottom: none;
+}
+
+.pf2e-treasure-tracker .slot-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.pf2e-treasure-tracker .drag-handle {
+  opacity: 0.45;
+  cursor: grab;
+  font-size: 0.8rem;
+}
+
+.pf2e-treasure-tracker .loot-row[draggable="true"]:hover .drag-handle {
+  opacity: 0.9;
+}
+
+.pf2e-treasure-tracker .slot-level {
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: #f59e0b;
+  white-space: nowrap;
+}
+
+.pf2e-treasure-tracker .slot-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pf2e-treasure-tracker .slot-item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .slot-icon-placeholder {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .slot-name {
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.pf2e-treasure-tracker .slot-name.item-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.pf2e-treasure-tracker .slot-name.unrolled,
+.pf2e-treasure-tracker .slot-name.blank-slot {
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.pf2e-treasure-tracker .rune-player-tag {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+/* Rarity Badges for Random Loot Roller */
+.pf2e-treasure-tracker .rarity-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+
+.pf2e-treasure-tracker .rarity-common {
+  background: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.pf2e-treasure-tracker .rarity-uncommon {
+  background: rgba(194, 65, 12, 0.28);
+  color: #fdba74;
+  border: 1px solid rgba(249, 115, 22, 0.5);
+}
+
+.pf2e-treasure-tracker .rarity-rare {
+  background: rgba(29, 78, 216, 0.28);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.5);
+}
+
+.pf2e-treasure-tracker .rarity-unique {
+  background: rgba(126, 34, 206, 0.3);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.5);
+}
+
+.pf2e-treasure-tracker .slot-price {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #fbbf24;
+  white-space: nowrap;
+}
+
+.pf2e-treasure-tracker .row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pf2e-treasure-tracker .btn-icon-action {
+  width: 1.9rem;
+  height: 1.85rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pf2e-treasure-tracker .distribute-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.pf2e-treasure-tracker .distribute-checkbox {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Random Loot Roller Form */
+.pf2e-treasure-tracker .random-roller-form {
+  display: grid;
+  grid-template-columns: 1.6fr 5.5rem 5.5rem 9.5rem 5.5rem auto;
+  gap: 0.6rem;
+  align-items: end;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pf2e-treasure-tracker .roller-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pf2e-treasure-tracker .roller-field label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.pf2e-treasure-tracker .roller-form-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pf2e-treasure-tracker .bonus-loot-form {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 4.5rem auto;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  align-items: center;
+}
+
+.pf2e-treasure-tracker .btn-add-bonus {
+  width: auto;
+  height: auto;
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  white-space: nowrap;
+}
+
+.pf2e-treasure-tracker .empty-section-note {
+  margin: 0.25rem 0;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* Visual State: Distributed historical record */
+.pf2e-treasure-tracker .loot-row.is-distributed .slot-main,
+.pf2e-treasure-tracker .loot-row.is-distributed .slot-price,
+.pf2e-treasure-tracker .loot-row.is-distributed .slot-meta {
+  opacity: 0.48;
+}
+
+.pf2e-treasure-tracker .loot-row.is-distributed .slot-name,
+.pf2e-treasure-tracker .loot-row.is-distributed .slot-price,
+.pf2e-treasure-tracker .loot-row.is-distributed .rune-player-tag {
+  text-decoration: line-through;
+}
+
+.pf2e-treasure-tracker .loot-row button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

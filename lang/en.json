@@ -1,0 +1,21 @@
+{
+  "SUFIAS_LOOT_TRACKER": {
+    "Title": "Sufia's Loot Tracker — Party Treasure by Level",
+    "HeaderButton": "Party Treasure by Level",
+    "GeneratePermanent": "Generate Permanent Items",
+    "GenerateConsumables": "Generate Consumables",
+    "GenerateCurrency": "Generate Currency & Valuables",
+    "GenerateClutter": "Generate Clutter Loot",
+    "RandomLootRoller": "Random Loot Roller",
+    "MandatoryPermanent": "Mandatory Permanent Items",
+    "MandatoryConsumables": "Mandatory Consumables",
+    "MandatoryCurrency": "Mandatory Currency / Valuables",
+    "FundamentalRunes": "Fundamental Runes (4 Players)",
+    "ClutterLoot": "Clutter Loot",
+    "BonusLoot": "Bonus Loot & Extra GP",
+    "Distributed": "Distributed",
+    "RerollItem": "Reroll this item",
+    "ClearItem": "Delete item (leave slot blank)",
+    "AddBonusSlot": "Add Bonus Slot"
+  }
+}
