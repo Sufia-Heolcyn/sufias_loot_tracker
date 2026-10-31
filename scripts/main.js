@@ -89,6 +89,8 @@ function createDefaultLevelSlots(level) {
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
+let activeTrackerInstance = null;
+
 export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(ApplicationV2) {
   constructor(partyActor, options = {}) {
     super(options);
@@ -198,6 +200,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
    * Queries pf2e.equipment-srd compendium index and populates mandatory slots for the active level
    */
   static async #onGenerateRandomLoot(event, target) {
+    if (!game.user.isGM) return;
     const level = this.activeLevel;
     const spec = PARTY_TREASURE_MATRIX[level];
     const pack = game.packs.get("pf2e.equipment-srd");
@@ -307,6 +310,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
    * Marks an item as distributed: true in the party actor's flags and re-renders to cross it out
    */
   static async #onDistributeItem(event, target) {
+    if (!game.user.isGM) return;
     const { category, index } = target.dataset;
     const flagData = await this.ensureFlagStructure();
     const list = flagData[this.activeLevel]?.[category];
@@ -321,6 +325,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
    * Restores a distributed item back to active (undistributed) state
    */
   static async #onUndoDistributeItem(event, target) {
+    if (!game.user.isGM) return;
     const { category, index } = target.dataset;
     const flagData = await this.ensureFlagStructure();
     const list = flagData[this.activeLevel]?.[category];
@@ -335,6 +340,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
    * Appends custom item UUIDs or raw GP values to the bonusLoot array
    */
   static async #onAddBonusLoot(event, target) {
+    if (!game.user.isGM) return;
     const form = this.element.querySelector(".bonus-loot-form");
     const uuidOrGp = form?.querySelector("[name='bonusInput']")?.value?.trim() || "";
     let customName = form?.querySelector("[name='bonusName']")?.value?.trim() || "";
@@ -372,6 +378,7 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
   }
 
   static async #onRemoveBonusLoot(event, target) {
+    if (!game.user.isGM) return;
     const index = Number(target.dataset.index);
     const flagData = await this.ensureFlagStructure();
     const list = flagData[this.activeLevel]?.bonusLoot;
@@ -393,10 +400,73 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
 }
 
 /**
- * Inject Header Button into the PF2e Party Sheet (Foundry v12 Application & v13 ApplicationV2)
+ * Resolves the world's active PF2e Party Actor and opens the Party Treasure Tracker (GM Only)
+ */
+export async function openPartyTreasureTracker() {
+  if (!game.user?.isGM) {
+    ui.notifications.warn("Only a Gamemaster can access Party Treasure by Level.");
+    return;
+  }
+
+  let partyActor = game.actors?.party ?? game.actors?.find((a) => a.type === "party");
+  if (!partyActor) {
+    partyActor = await Actor.create({ name: "Party", type: "party" });
+  }
+
+  if (!partyActor) {
+    ui.notifications.error("No PF2e Party actor found in this world.");
+    return;
+  }
+
+  if (!activeTrackerInstance || activeTrackerInstance.actor?.id !== partyActor.id) {
+    activeTrackerInstance = new PartyTreasureTrackerApp(partyActor);
+  }
+  activeTrackerInstance.render(true);
+}
+
+/**
+ * Inject GM-only button into the main left-hand Scene Controls bar under Journal Notes ("notes").
+ * Compatible with Foundry VTT v13 / v14 (Record/Object structure) and Foundry VTT v12 (Array structure).
+ */
+Hooks.on("getSceneControlButtons", (controls) => {
+  const toolConfig = {
+    name: "sufias-loot-tracker",
+    title: "Party Treasure by Level",
+    icon: "fa-solid fa-coins",
+    visible: Boolean(game.user?.isGM),
+    button: true,
+    onChange: () => openPartyTreasureTracker(),
+    onClick: () => openPartyTreasureTracker()
+  };
+
+  // Foundry VTT v13 / v14: controls is an Object keyed by control group name (controls.notes.tools)
+  if (!Array.isArray(controls) && controls?.notes) {
+    if (Array.isArray(controls.notes.tools)) {
+      controls.notes.tools.push(toolConfig);
+    } else if (controls.notes.tools && typeof controls.notes.tools === "object") {
+      const order = Object.keys(controls.notes.tools).length + 1;
+      controls.notes.tools["sufias-loot-tracker"] = {
+        ...toolConfig,
+        order
+      };
+    }
+    return;
+  }
+
+  // Foundry VTT v12: controls is an Array of control groups
+  if (Array.isArray(controls)) {
+    const notesControl = controls.find((c) => c.name === "notes");
+    if (notesControl && Array.isArray(notesControl.tools)) {
+      notesControl.tools.push(toolConfig);
+    }
+  }
+});
+
+/**
+ * Also keep the GM-only header button on the PF2e Party Sheet
  */
 Hooks.on("getActorSheetHeaderButtons", (sheet, buttons) => {
-  if (sheet.actor?.type !== "party") return;
+  if (!game.user?.isGM || sheet.actor?.type !== "party") return;
   buttons.unshift({
     label: "Party Treasure by Level",
     class: "sufias-loot-tracker-btn",
@@ -406,7 +476,7 @@ Hooks.on("getActorSheetHeaderButtons", (sheet, buttons) => {
 });
 
 Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
-  if (app.actor?.type !== "party") return;
+  if (!game.user?.isGM || app.actor?.type !== "party") return;
   controls.push({
     icon: "fa-solid fa-coins",
     label: "Party Treasure by Level",
