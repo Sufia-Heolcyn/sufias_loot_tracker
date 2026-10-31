@@ -4,16 +4,27 @@ A Foundry VTT (v12 / v13) module for the **Pathfinder Second Edition (`pf2e`)** 
 
 ## Installation via Manifest URL
 
-In Foundry VTT **Add-on Modules -> Install Module**, paste the following **Manifest URL** at the bottom of the dialog:
+In Foundry VTT **Add-on Modules -> Install Module**, paste this **Manifest URL** at the bottom of the dialog:
 
 ```text
-https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/latest/download/module.json
+https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/main/module.json
 ```
 
-Or for release `0.0.1` specifically:
+## Module Structure
 
 ```text
-https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/download/0.0.1/module.json
+sufias_loot_tracker/
+├── module.json
+├── LICENSE
+├── README.md
+├── lang/
+│   └── en.json
+├── scripts/
+│   └── main.js
+├── styles/
+│   └── module.css
+└── templates/
+    └── treasure-tracker.hbs
 ```
 
 ## License & Attribution

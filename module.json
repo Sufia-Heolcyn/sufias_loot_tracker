@@ -35,11 +35,14 @@
     {
       "lang": "en",
       "name": "English",
-      "path": "lang/en.json",
-      "flags": {}
+      "path": "lang/en.json"
     }
   ],
   "url": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker",
-  "manifest": "https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/releases/latest/download/module.json",
-  "download": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/download/0.0.1/module.zip"
+  "manifest": "https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/main/module.json",
+  "download": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/archive/refs/tags/0.0.1.zip",
+  "license": "LICENSE",
+  "readme": "https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/main/README.md",
+  "bugs": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/issues",
+  "changelog": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/tag/0.0.1"
 }

@@ -1,18 +1,22 @@
 /**
  * Sufia's Loot Tracker — PF2e Party Treasure by Level (GM Core Table 10-9)
  * SPDX-License-Identifier: MIT
- * Game Mechanics licensed under the ORC License (see LICENSE).
+ * Pathfinder 2e Remaster Table 10-9 mechanics licensed under the ORC License (see LICENSE).
  *
- * Stores all state strictly in Party Actor Flags:
- * actor.getFlag('sufias_loot_tracker', 'treasure-data')
- * actor.setFlag('sufias_loot_tracker', 'treasure-data', {...})
+ * Data Storage:
+ * Strictly stored on the PF2e `party` Actor using Foundry Flags:
+ *   actor.getFlag("sufias_loot_tracker", "treasure-data")
+ *   actor.setFlag("sufias_loot_tracker", "treasure-data", { 1: {...}, ..., 20: {...} })
  */
 
 const MODULE_ID = "sufias_loot_tracker";
 const FLAG_KEY = "treasure-data";
 
+/**
+ * GM Core Table 10-9: Party Treasure by Level (Levels 1–20)
+ */
 export const PARTY_TREASURE_MATRIX = {
-  1:  { totalGp: 175,    permanent: [{ level: 2, count: 2 }, { level: 1, count: 2 }], consumables: [{ level: 2, count: 2 }, { level: 1, count: 3 }], currencyGp: 40,     extraPcGp: 10 },
+  1:  { totalGp: 175,    permanent: [{ level: 2, count: 2 }, { level: 1, count: 2 }], consumables: [{ level: 2, count: 2 }, { level: 1, count: 3 }], currencyGp: 40,     extraPcGp: 10,    note: "Many 1st-level permanent items should be items from Chapter 6 of Player Core instead of magic items." },
   2:  { totalGp: 300,    permanent: [{ level: 3, count: 2 }, { level: 2, count: 2 }], consumables: [{ level: 3, count: 2 }, { level: 2, count: 2 }, { level: 1, count: 2 }], currencyGp: 70,     extraPcGp: 18 },
   3:  { totalGp: 500,    permanent: [{ level: 4, count: 2 }, { level: 3, count: 2 }], consumables: [{ level: 4, count: 2 }, { level: 3, count: 2 }, { level: 2, count: 2 }], currencyGp: 120,    extraPcGp: 30 },
   4:  { totalGp: 850,    permanent: [{ level: 5, count: 2 }, { level: 4, count: 2 }], consumables: [{ level: 5, count: 2 }, { level: 4, count: 2 }, { level: 3, count: 2 }], currencyGp: 200,    extraPcGp: 50 },
@@ -34,13 +38,63 @@ export const PARTY_TREASURE_MATRIX = {
   20: { totalGp: 490000, permanent: [{ level: 20, count: 4 }],                       consumables: [{ level: 20, count: 4 }, { level: 19, count: 2 }], currencyGp: 140000, extraPcGp: 35000 }
 };
 
+/**
+ * Builds the default empty slot structure for a single level from PARTY_TREASURE_MATRIX
+ */
+function createDefaultLevelSlots(level) {
+  const spec = PARTY_TREASURE_MATRIX[level];
+  const permanentItems = [];
+  for (const group of spec.permanent) {
+    for (let i = 0; i < group.count; i++) {
+      permanentItems.push({
+        uuid: "",
+        name: `[Unrolled Slot] Level ${group.level} Permanent Item`,
+        level: group.level,
+        type: "permanent",
+        distributed: false
+      });
+    }
+  }
+
+  const consumables = [];
+  for (const group of spec.consumables) {
+    for (let i = 0; i < group.count; i++) {
+      consumables.push({
+        uuid: "",
+        name: `[Unrolled Slot] Level ${group.level} Consumable`,
+        level: group.level,
+        type: "consumable",
+        distributed: false
+      });
+    }
+  }
+
+  const currency = [
+    {
+      uuid: "",
+      name: `${spec.currencyGp.toLocaleString()} gp (Party Currency)`,
+      level: 0,
+      type: "treasure",
+      distributed: false
+    }
+  ];
+
+  return {
+    permanentItems,
+    consumables,
+    currency,
+    bonusLoot: []
+  };
+}
+
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(ApplicationV2) {
   constructor(partyActor, options = {}) {
     super(options);
     this.actor = partyActor;
-    this.activeLevel = partyActor?.system?.details?.level?.value || 1;
+    this.activeLevel = Number(partyActor?.system?.details?.level?.value) || 1;
+    if (this.activeLevel < 1 || this.activeLevel > 20) this.activeLevel = 1;
   }
 
   static DEFAULT_OPTIONS = {
@@ -53,13 +107,16 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     },
     position: {
       width: 920,
-      height: 720
+      height: 740
     },
     actions: {
       selectLevel: PartyTreasureTrackerApp.#onSelectLevel,
       generateRandomLoot: PartyTreasureTrackerApp.#onGenerateRandomLoot,
       distributeItem: PartyTreasureTrackerApp.#onDistributeItem,
-      addBonusLoot: PartyTreasureTrackerApp.#onAddBonusLoot
+      undoDistributeItem: PartyTreasureTrackerApp.#onUndoDistributeItem,
+      addBonusLoot: PartyTreasureTrackerApp.#onAddBonusLoot,
+      removeBonusLoot: PartyTreasureTrackerApp.#onRemoveBonusLoot,
+      openItemSheet: PartyTreasureTrackerApp.#onOpenItemSheet
     }
   };
 
@@ -69,42 +126,65 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     }
   };
 
+  /**
+   * Ensures actor flag structure contains keys 1..20 with permanentItems, consumables, currency, bonusLoot
+   */
   async ensureFlagStructure() {
     let flagData = this.actor.getFlag(MODULE_ID, FLAG_KEY);
-    if (!flagData) {
+    let needsSave = false;
+
+    if (!flagData || typeof flagData !== "object") {
       flagData = {};
-      for (let lvl = 1; lvl <= 20; lvl++) {
-        flagData[lvl] = {
-          permanentItems: [],
-          consumables: [],
-          currency: [],
-          bonusLoot: []
-        };
-      }
-      await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
+      needsSave = true;
     }
-    return foundry.utils.deepClone(flagData);
+
+    const cloned = foundry.utils.deepClone(flagData);
+    for (let lvl = 1; lvl <= 20; lvl++) {
+      if (!cloned[lvl] || !Array.isArray(cloned[lvl].permanentItems)) {
+        cloned[lvl] = createDefaultLevelSlots(lvl);
+        needsSave = true;
+      }
+    }
+
+    if (needsSave && game.user.isGM) {
+      await this.actor.setFlag(MODULE_ID, FLAG_KEY, cloned);
+    }
+    return cloned;
   }
 
   async _prepareContext() {
     const flagData = await this.ensureFlagStructure();
-    const currentLevelData = flagData[this.activeLevel] || {
-      permanentItems: [],
-      consumables: [],
-      currency: [],
-      bonusLoot: []
-    };
+    const currentLevelData = flagData[this.activeLevel] || createDefaultLevelSlots(this.activeLevel);
+    const spec = PARTY_TREASURE_MATRIX[this.activeLevel];
 
-    const levels = Array.from({ length: 20 }, (_, i) => ({
-      level: i + 1,
-      active: i + 1 === this.activeLevel
-    }));
+    const levels = Array.from({ length: 20 }, (_, i) => {
+      const lvl = i + 1;
+      const ld = flagData[lvl];
+      const allMand = [
+        ...(ld?.permanentItems || []),
+        ...(ld?.consumables || []),
+        ...(ld?.currency || [])
+      ];
+      const distCount = allMand.filter((e) => e.distributed).length;
+      return {
+        level: lvl,
+        active: lvl === this.activeLevel,
+        progress: `${distCount}/${allMand.length}`
+      };
+    });
 
     return {
       actorName: this.actor.name,
       activeLevel: this.activeLevel,
       levels,
-      prescription: PARTY_TREASURE_MATRIX[this.activeLevel],
+      prescription: {
+        ...spec,
+        totalGpFormatted: spec.totalGp.toLocaleString(),
+        currencyGpFormatted: spec.currencyGp.toLocaleString(),
+        extraPcGpFormatted: spec.extraPcGp.toLocaleString(),
+        permanentSummary: spec.permanent.map((p) => `${p.count}x Lv ${p.level}`).join(", "),
+        consumableSummary: spec.consumables.map((c) => `${c.count}x Lv ${c.level}`).join(", ")
+      },
       levelData: currentLevelData
     };
   }
@@ -114,14 +194,19 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     await this.render();
   }
 
+  /**
+   * Queries pf2e.equipment-srd compendium index and populates mandatory slots for the active level
+   */
   static async #onGenerateRandomLoot(event, target) {
     const level = this.activeLevel;
     const spec = PARTY_TREASURE_MATRIX[level];
     const pack = game.packs.get("pf2e.equipment-srd");
     if (!pack) {
-      ui.notifications.error("Compendium pf2e.equipment-srd not found.");
+      ui.notifications.error("Compendium pf2e.equipment-srd not found in this world.");
       return;
     }
+
+    ui.notifications.info(`Rolling Level ${level} Party Treasure from pf2e.equipment-srd...`);
 
     const index = await pack.getIndex({
       fields: ["system.level.value", "system.price.value", "type", "system.traits.rarity"]
@@ -169,13 +254,16 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     const currency = [];
     if (currencyMode === "treasure") {
       let remainingGp = spec.currencyGp;
-      const treasures = index.filter((e) => e.type === "treasure" && (e.system?.price?.value?.gp ?? 0) > 0);
+      const treasures = index.filter((e) => {
+        const gpVal = e.system?.price?.value?.gp ?? 0;
+        return e.type === "treasure" && gpVal > 0;
+      });
       while (remainingGp > 0) {
-        const valid = treasures.filter((t) => t.system.price.value.gp <= remainingGp);
+        const valid = treasures.filter((t) => (t.system?.price?.value?.gp ?? 0) <= remainingGp);
         if (!valid.length) {
           currency.push({
-            uuid: "Compendium.pf2e.equipment-srd.Item.Quit999GoldCoins",
-            name: `${remainingGp} gp (Gold Coins)`,
+            uuid: "",
+            name: `${remainingGp.toLocaleString()} gp (Gold Coins)`,
             level: 0,
             type: "treasure",
             distributed: false
@@ -183,19 +271,20 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
           break;
         }
         const chosen = valid[Math.floor(Math.random() * valid.length)];
+        const gpPrice = chosen.system.price.value.gp;
         currency.push({
           uuid: chosen.uuid,
-          name: `${chosen.name} (${chosen.system.price.value.gp} gp)`,
+          name: `${chosen.name} (${gpPrice.toLocaleString()} gp)`,
           level: chosen.system?.level?.value ?? 1,
           type: "treasure",
           distributed: false
         });
-        remainingGp -= chosen.system.price.value.gp;
+        remainingGp -= gpPrice;
       }
     } else {
       currency.push({
-        uuid: "Compendium.pf2e.equipment-srd.Item.Quit999GoldCoins",
-        name: `${spec.currencyGp} gp`,
+        uuid: "",
+        name: `${spec.currencyGp.toLocaleString()} gp (Party Currency)`,
         level: 0,
         type: "treasure",
         distributed: false
@@ -214,6 +303,9 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     await this.render();
   }
 
+  /**
+   * Marks an item as distributed: true in the party actor's flags and re-renders to cross it out
+   */
   static async #onDistributeItem(event, target) {
     const { category, index } = target.dataset;
     const flagData = await this.ensureFlagStructure();
@@ -225,27 +317,84 @@ export class PartyTreasureTrackerApp extends HandlebarsApplicationMixin(Applicat
     await this.render();
   }
 
+  /**
+   * Restores a distributed item back to active (undistributed) state
+   */
+  static async #onUndoDistributeItem(event, target) {
+    const { category, index } = target.dataset;
+    const flagData = await this.ensureFlagStructure();
+    const list = flagData[this.activeLevel]?.[category];
+    if (!list || !list[Number(index)]) return;
+
+    list[Number(index)].distributed = false;
+    await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
+    await this.render();
+  }
+
+  /**
+   * Appends custom item UUIDs or raw GP values to the bonusLoot array
+   */
   static async #onAddBonusLoot(event, target) {
     const form = this.element.querySelector(".bonus-loot-form");
-    const uuidOrGp = form?.querySelector("[name='bonusInput']")?.value?.trim();
-    const customName = form?.querySelector("[name='bonusName']")?.value?.trim();
-    const itemLevel = Number(form?.querySelector("[name='bonusLevel']")?.value) || this.activeLevel;
+    const uuidOrGp = form?.querySelector("[name='bonusInput']")?.value?.trim() || "";
+    let customName = form?.querySelector("[name='bonusName']")?.value?.trim() || "";
+    let itemLevel = Number(form?.querySelector("[name='bonusLevel']")?.value) || this.activeLevel;
     if (!uuidOrGp && !customName) return;
+
+    let resolvedUuid = "";
+    let resolvedType = "treasure";
+
+    if (uuidOrGp.startsWith("Compendium.") || uuidOrGp.startsWith("Item.")) {
+      resolvedUuid = uuidOrGp;
+      try {
+        const doc = await fromUuid(resolvedUuid);
+        if (doc) {
+          customName = customName || doc.name;
+          itemLevel = doc.system?.level?.value ?? itemLevel;
+          resolvedType = doc.type === "consumable" ? "consumable" : doc.type === "treasure" ? "treasure" : "permanent";
+        }
+      } catch {
+        // Keep manual name if UUID lookup fails
+      }
+    }
 
     const flagData = await this.ensureFlagStructure();
     flagData[this.activeLevel].bonusLoot.push({
-      uuid: uuidOrGp.startsWith("Compendium.") ? uuidOrGp : "",
+      uuid: resolvedUuid,
       name: customName || uuidOrGp,
       level: itemLevel,
-      type: "treasure",
+      type: resolvedType,
       distributed: false
     });
 
     await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
     await this.render();
   }
+
+  static async #onRemoveBonusLoot(event, target) {
+    const index = Number(target.dataset.index);
+    const flagData = await this.ensureFlagStructure();
+    const list = flagData[this.activeLevel]?.bonusLoot;
+    if (!Array.isArray(list)) return;
+
+    list.splice(index, 1);
+    await this.actor.setFlag(MODULE_ID, FLAG_KEY, flagData);
+    await this.render();
+  }
+
+  static async #onOpenItemSheet(event, target) {
+    const uuid = target.dataset.uuid;
+    if (!uuid) return;
+    const doc = await fromUuid(uuid);
+    if (doc?.sheet) {
+      doc.sheet.render(true);
+    }
+  }
 }
 
+/**
+ * Inject Header Button into the PF2e Party Sheet (Foundry v12 Application & v13 ApplicationV2)
+ */
 Hooks.on("getActorSheetHeaderButtons", (sheet, buttons) => {
   if (sheet.actor?.type !== "party") return;
   buttons.unshift({
