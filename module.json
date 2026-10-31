@@ -1,0 +1,48 @@
+{
+  "id": "sufias_loot_tracker",
+  "title": "Sufia's Loot Tracker (PF2e Party Treasure by Level)",
+  "description": "Automates and tracks the Pathfinder 2e Remaster GM Core Table 10-9 Party Treasure by Level guidelines across Levels 1–20 directly inside the PF2e Party Actor flags.",
+  "version": "0.0.1",
+  "compatibility": {
+    "minimum": "12",
+    "verified": "13"
+  },
+  "authors": [
+    {
+      "name": "Sufia-Heolcyn",
+      "url": "https://github.com/Sufia-Heolcyn"
+    }
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "pf2e",
+        "type": "system",
+        "compatibility": {
+          "minimum": "6.0.0",
+          "verified": "6.9.0"
+        }
+      }
+    ]
+  },
+  "esmodules": [
+    "scripts/main.js"
+  ],
+  "styles": [
+    "styles/module.css"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "url": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker",
+  "manifest": "https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/main/module.json",
+  "download": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/archive/refs/tags/0.0.1.zip",
+  "license": "LICENSE",
+  "readme": "https://raw.githubusercontent.com/Sufia-Heolcyn/sufias_loot_tracker/main/README.md",
+  "bugs": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/issues",
+  "changelog": "https://github.com/Sufia-Heolcyn/sufias_loot_tracker/releases/tag/0.0.1"
+}
